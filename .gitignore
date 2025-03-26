@@ -1,0 +1,30 @@
+# Compiled binary
+image-compressor
+
+# Operating System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+
+# IDE/Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local environment configuration
+.env
+
+# Go build cache (less relevant if only building in Docker, but good practice)
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Log files (if generated locally)
+*.log
+
+
+# Feature Ideas
+.feature_delete_unused_images

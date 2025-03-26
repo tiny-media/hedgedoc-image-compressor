@@ -1,8 +1,8 @@
 FROM alpine:3.21 AS builder
 
-# Install build dependencies
+# Install build dependencies (using Go 1.24)
 RUN apk add --no-cache \
-    go \
+    go~1.24 \
     gcc \
     g++ \
     pkgconf \

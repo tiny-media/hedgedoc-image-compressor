@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	stdlog "log" // Import standard log package
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,15 +13,12 @@ import (
 	"github.com/davidbyttow/govips/v2/vips"
 	"github.com/fsnotify/fsnotify"
 	"github.com/rs/zerolog"
-	zlog "github.com/rs/zerolog/log" // Alias zerolog's log
+	"github.com/rs/zerolog/log" // Use zerolog's global logger directly
 )
 
 // Recently processed files cache to avoid double-processing
 var recentlyProcessed sync.Map
 var processingCount atomic.Int32
-
-// Use zerolog for general logging, aliased to avoid conflict with stdlog
-var log = zlog.Logger
 
 // Configuration struct to hold all application settings
 type Config struct {
@@ -60,42 +56,56 @@ func loadConfig() Config {
 	if threshold := os.Getenv("REDUCTION_THRESHOLD"); threshold != "" {
 		if value, err := strconv.Atoi(threshold); err == nil && value >= 0 && value <= 100 {
 			config.ReductionThreshold = value
+		} else if err != nil {
+			log.Warn().Err(err).Str("value", threshold).Msg("Invalid REDUCTION_THRESHOLD, using default")
 		}
 	}
 
 	if quality := os.Getenv("WEBP_QUALITY"); quality != "" {
 		if value, err := strconv.Atoi(quality); err == nil && value > 0 && value <= 100 {
 			config.WebpQuality = value
+		} else if err != nil {
+			log.Warn().Err(err).Str("value", quality).Msg("Invalid WEBP_QUALITY, using default")
 		}
 	}
 
 	if quality := os.Getenv("AVIF_QUALITY"); quality != "" {
 		if value, err := strconv.Atoi(quality); err == nil && value > 0 && value <= 100 {
 			config.AvifQuality = value
+		} else if err != nil {
+			log.Warn().Err(err).Str("value", quality).Msg("Invalid AVIF_QUALITY, using default")
 		}
 	}
 
 	if quality := os.Getenv("JPEG_QUALITY"); quality != "" {
 		if value, err := strconv.Atoi(quality); err == nil && value > 0 && value <= 100 {
 			config.JpegQuality = value
+		} else if err != nil {
+			log.Warn().Err(err).Str("value", quality).Msg("Invalid JPEG_QUALITY, using default")
 		}
 	}
 
 	if dimension := os.Getenv("MAX_DIMENSION"); dimension != "" {
 		if value, err := strconv.Atoi(dimension); err == nil && value > 0 {
 			config.MaxDimension = value
+		} else if err != nil {
+			log.Warn().Err(err).Str("value", dimension).Msg("Invalid MAX_DIMENSION, using default")
 		}
 	}
 
 	if processes := os.Getenv("PARALLEL_PROCESSES"); processes != "" {
 		if value, err := strconv.Atoi(processes); err == nil && value > 0 {
 			config.ParallelProcesses = value
+		} else if err != nil {
+			log.Warn().Err(err).Str("value", processes).Msg("Invalid PARALLEL_PROCESSES, using default")
 		}
 	}
 
 	if cpus := os.Getenv("CPU_COUNT"); cpus != "" {
 		if value, err := strconv.Atoi(cpus); err == nil && value > 0 {
 			config.CpuCount = value
+		} else if err != nil {
+			log.Warn().Err(err).Str("value", cpus).Msg("Invalid CPU_COUNT, using default")
 		}
 	}
 
@@ -153,10 +163,7 @@ func processImage(filePath string, config Config, wg *sync.WaitGroup) {
 	// Get original file info and stats
 	originalInfo, err := os.Stat(filePath)
 	if err != nil {
-		log.Error(). // Use zerolog for non-fatal errors
-				Err(err).
-				Str("file", filepath.Base(filePath)).
-				Msg("Failed to get file info")
+		log.Error().Err(err).Str("file", filepath.Base(filePath)).Msg("Failed to get file info")
 		return
 	}
 
@@ -166,109 +173,96 @@ func processImage(filePath string, config Config, wg *sync.WaitGroup) {
 	// Load image
 	image, err := vips.NewImageFromFile(filePath)
 	if err != nil {
-		log.Error(). // Use zerolog for non-fatal errors
-				Err(err).
-				Str("file", filepath.Base(filePath)).
-				Msg("Failed to load image")
+		log.Error().Err(err).Str("file", filepath.Base(filePath)).Msg("Failed to load image")
 		return
 	}
 	defer image.Close()
 
-	// Resize if needed
-	if image.Width() > config.MaxDimension || image.Height() > config.MaxDimension {
-		scale := float64(config.MaxDimension) / float64(max(image.Width(), image.Height()))
-		err = image.Resize(scale, vips.KernelLanczos3)
-		if err != nil {
-			log.Error(). // Use zerolog for non-fatal errors
-					Err(err).
-					Str("file", filepath.Base(filePath)).
-					Msg("Failed to resize image")
+	// Resize if needed (using built-in max since Go 1.21+)
+	if newWidth, newHeight := image.Width(), image.Height(); newWidth > config.MaxDimension || newHeight > config.MaxDimension {
+		scale := float64(config.MaxDimension) / float64(max(newWidth, newHeight)) // Use built-in max
+		if err := image.Resize(scale, vips.KernelLanczos3); err != nil {
+			log.Error().Err(err).Str("file", filepath.Base(filePath)).Msg("Failed to resize image")
 			return
 		}
 	}
 
 	// Prepare export parameters based on output format
-	var exportParams *vips.ExportParams
+	var exportParams vips.ExportParams // Use zero value initially
 	switch config.OutputFormat {
 	case "webp":
-		exportParams = &vips.ExportParams{
+		exportParams = vips.ExportParams{
 			Format:  vips.ImageTypeWEBP,
 			Quality: config.WebpQuality,
 		}
 	case "avif":
-		exportParams = &vips.ExportParams{
+		exportParams = vips.ExportParams{
 			Format:  vips.ImageTypeAVIF,
 			Quality: config.AvifQuality,
 		}
 	case "jpg", "jpeg":
-		exportParams = &vips.ExportParams{
+		exportParams = vips.ExportParams{
 			Format:  vips.ImageTypeJPEG,
 			Quality: config.JpegQuality,
 		}
 	default:
-		// Fallback to AVIF if unknown format specified
-		exportParams = &vips.ExportParams{
+		log.Warn().Str("format", config.OutputFormat).Msg("Unknown OUTPUT_FORMAT specified, falling back to avif")
+		exportParams = vips.ExportParams{ // Fallback to AVIF
 			Format:  vips.ImageTypeAVIF,
 			Quality: config.AvifQuality,
 		}
 	}
 
 	// Export the image to buffer
-	buf, _, err := image.Export(exportParams)
+	buf, _, err := image.Export(&exportParams) // Pass pointer
 	if err != nil {
-		log.Error(). // Use zerolog for non-fatal errors
-				Err(err).
-				Str("file", filepath.Base(filePath)).
-				Str("format", config.OutputFormat).
-				Msg("Failed to export image")
+		log.Error().Err(err).Str("file", filepath.Base(filePath)).Str("format", config.OutputFormat).Msg("Failed to export image")
 		return
 	}
 
 	// Write the compressed image to temporary file
-	err = os.WriteFile(tempPath, buf, originalInfo.Mode())
-	if err != nil {
-		log.Error(). // Use zerolog for non-fatal errors
-				Err(err).
-				Str("file", filepath.Base(filePath)).
-				Msg("Failed to write compressed image")
+	if err := os.WriteFile(tempPath, buf, originalInfo.Mode()); err != nil {
+		log.Error().Err(err).Str("file", filepath.Base(filePath)).Msg("Failed to write compressed image")
 		return
 	}
 
 	// Get the size of the compressed file
 	compressedInfo, err := os.Stat(tempPath)
 	if err != nil {
-		log.Error(). // Use zerolog for non-fatal errors
-				Err(err).
-				Str("file", filepath.Base(filePath)).
-				Msg("Failed to get compressed file info")
-		os.Remove(tempPath)
+		log.Error().Err(err).Str("file", filepath.Base(filePath)).Msg("Failed to get compressed file info")
+		_ = os.Remove(tempPath) // Attempt cleanup, ignore error
 		return
 	}
 
 	compressedSize := compressedInfo.Size()
-	reductionPercent := float64(originalSize-compressedSize) / float64(originalSize) * 100
+	reductionPercent := 0.0
+	if originalSize > 0 { // Avoid division by zero
+		reductionPercent = float64(originalSize-compressedSize) / float64(originalSize) * 100
+	}
 
 	// Decide whether to keep the compressed version
-	if reductionPercent >= float64(config.ReductionThreshold) {
-		err = os.Rename(tempPath, filePath)
-		if err != nil {
-			log.Error(). // Use zerolog for non-fatal errors
-					Err(err).
-					Str("file", filepath.Base(filePath)).
-					Msg("Failed to replace original with compressed image")
-			os.Remove(tempPath)
+	if reductionPercent >= float64(config.ReductionThreshold) && compressedSize < originalSize { // Also ensure it's actually smaller
+		if err := os.Rename(tempPath, filePath); err != nil {
+			log.Error().Err(err).Str("file", filepath.Base(filePath)).Msg("Failed to replace original with compressed image")
+			_ = os.Remove(tempPath) // Attempt cleanup, ignore error
 			return
 		}
 
 		log.Info().
-			Msgf("Image compressed and replaced: original_size_kb=%.1f compressed_size_kb=%.1f reduction_percent=%.1f processing_time_sec=%.1f file=%s",
-				float64(originalSize)/1024, float64(compressedSize)/1024, reductionPercent, time.Since(startTime).Seconds(), filepath.Base(filePath))
+			Float64("original_kb", float64(originalSize)/1024).
+			Float64("compressed_kb", float64(compressedSize)/1024).
+			Float64("reduction_pct", reductionPercent).
+			Float64("processing_sec", time.Since(startTime).Seconds()).
+			Str("file", filepath.Base(filePath)).
+			Msg("Image compressed and replaced")
 	} else {
-		// Remove the temporary file if the reduction doesn't meet the threshold
-		os.Remove(tempPath)
+		// Remove the temporary file if the reduction doesn't meet the threshold or if it's larger
+		_ = os.Remove(tempPath) // Attempt cleanup, ignore error
 		log.Info().
-			Msgf("Compression below threshold, keeping original: reduction_percent=%.1f processing_time_sec=%.1f file=%s",
-				reductionPercent, time.Since(startTime).Seconds(), filepath.Base(filePath))
+			Float64("reduction_pct", reductionPercent).
+			Float64("processing_sec", time.Since(startTime).Seconds()).
+			Str("file", filepath.Base(filePath)).
+			Msg("Compression below threshold or not smaller, keeping original")
 	}
 }
 
@@ -278,7 +272,8 @@ func waitForFileStability(filePath string, checkInterval time.Duration, stableDu
 	startTime := time.Now()
 
 	var lastInfo os.FileInfo
-	var err error
+	var err error // Declare err once for the loop
+
 	stableChecks := 0
 	requiredStableChecks := int(stableDuration / checkInterval)
 	if requiredStableChecks < 1 {
@@ -286,23 +281,24 @@ func waitForFileStability(filePath string, checkInterval time.Duration, stableDu
 	}
 
 	for {
-		// Check for overall timeout
+		// Check for overall timeout first
 		if time.Since(startTime) > timeout {
 			return fmt.Errorf("timeout waiting for file stability: %s", filePath)
 		}
 
-		currentInfo, err := os.Stat(filePath)
-		if err != nil {
+		currentInfo, statErr := os.Stat(filePath) // Use different variable name for Stat error
+		if statErr != nil {
 			// If the file doesn't exist (maybe deleted quickly), return error
-			if os.IsNotExist(err) {
+			if os.IsNotExist(statErr) {
 				return fmt.Errorf("file disappeared while waiting for stability: %s", filePath)
 			}
 			// Log other stat errors but continue trying
-			log.Warn().Err(err).Str("file", filePath).Msg("Error stating file during stability check, retrying...") // Use zerolog for warnings
-			time.Sleep(checkInterval)                                                                               // Wait before retrying stat
-			continue
+			log.Warn().Err(statErr).Str("file", filePath).Msg("Error stating file during stability check, retrying...")
+			time.Sleep(checkInterval) // Wait before retrying stat
+			continue                  // Continue the loop
 		}
 
+		// Check for stability
 		if lastInfo != nil && currentInfo.Size() == lastInfo.Size() && currentInfo.ModTime() == lastInfo.ModTime() {
 			stableChecks++
 			if stableChecks >= requiredStableChecks {
@@ -317,10 +313,11 @@ func waitForFileStability(filePath string, checkInterval time.Duration, stableDu
 		lastInfo = currentInfo
 		time.Sleep(checkInterval)
 	}
+	// Note: The outer 'err' declared earlier is intentionally unused if the loop exits normally or via timeout return.
 }
 
 func main() {
-	// Configure logger (using zerolog)
+	// Configure logger (using zerolog's global logger)
 	// Set default level to info
 	zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
@@ -329,8 +326,8 @@ func main() {
 		zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	}
 
-	// Assign zerolog logger to the global 'log' variable
-	log = zlog.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	// Use console writer for human-friendly output
+	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
 
 	// Log startup
 	log.Info().Msg("HedgeDoc Image Compressor starting up")
@@ -338,7 +335,7 @@ func main() {
 	// Load configuration
 	config := loadConfig()
 
-	// Log configuration
+	// Log configuration details
 	log.Info().
 		Str("output_format", config.OutputFormat).
 		Int("reduction_threshold", config.ReductionThreshold).
@@ -352,51 +349,61 @@ func main() {
 		Msg("Configuration loaded")
 
 	// Initialize vips
-	// Set logging level to warning to reduce verbosity of internal libvips messages
-	vips.LoggingSettings(nil, vips.LogLevelWarning)
+	vips.LoggingSettings(nil, vips.LogLevelWarning) // Reduce vips internal logging
 	vips.Startup(&vips.Config{
-		ConcurrencyLevel: config.CpuCount,
-		MaxCacheFiles:    0,
-		MaxCacheMem:      0,
-		MaxCacheSize:     0,
-		ReportLeaks:      false,
+		ConcurrencyLevel: config.CpuCount, // Let vips use configured CPU count
+		// Keep other vips cache settings at default (0 means default/auto)
 	})
 	defer vips.Shutdown()
 
-	// Make sure the watch directory exists using standard "if with short statement"
+	// --- Startup Checks ---
+
+	// Make sure the watch directory exists (using standard "if with short statement")
 	if _, err := os.Stat(config.WatchDir); err != nil {
-		if os.IsNotExist(err) { // Check if the specific error is NotExist
-			// Use standard library log.Fatalf for this specific fatal error
-			stdlog.Fatalf("Watch directory does not exist: %v", err)
+		if os.IsNotExist(err) {
+			log.Fatal().Err(err).Str("directory", config.WatchDir).Msg("Watch directory does not exist")
 		}
-		// Log other Stat errors as warnings but continue
+		// Log other Stat errors but continue if it's not a NotExist error
 		log.Warn().Err(err).Str("directory", config.WatchDir).Msg("Warning: Error stating watch directory (but it exists)")
 	}
 
 	// Create file watcher
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		// Use standard library log.Fatalf for this specific fatal error
-		stdlog.Fatalf("Failed to create file watcher: %v", err)
+		// Use standard zerolog fatal error handling
+		log.Fatal().Err(err).Msg("Failed to create file watcher")
 	}
 	defer watcher.Close()
+
+	// Add the watch directory
+	if err := watcher.Add(config.WatchDir); err != nil {
+		// Use standard zerolog fatal error handling
+		log.Fatal().Err(err).Str("directory", config.WatchDir).Msg("Failed to watch directory")
+	}
+
+	// --- Goroutines ---
 
 	// Create wait group for parallel processing
 	var wg sync.WaitGroup
 
-	// Cleanup routine for recently processed files
+	// Cleanup routine for recently processed files cache
 	go func() {
-		for {
-			// Clean up entries older than 5 seconds
+		ticker := time.NewTicker(5 * time.Second) // Use a ticker for periodic cleanup
+		defer ticker.Stop()
+		for range ticker.C {
 			now := time.Now()
 			recentlyProcessed.Range(func(key, value interface{}) bool {
-				processTime, ok := value.(time.Time)
-				if ok && now.Sub(processTime) > 5*time.Second {
+				if processTime, ok := value.(time.Time); ok {
+					if now.Sub(processTime) > 5*time.Second {
+						recentlyProcessed.Delete(key)
+						log.Debug().Str("file", key.(string)).Msg("Removed file from recently processed cache")
+					}
+				} else {
+					// Clean up potentially invalid entries
 					recentlyProcessed.Delete(key)
 				}
-				return true
+				return true // Continue iteration
 			})
-			time.Sleep(5 * time.Second)
 		}
 	}()
 
@@ -406,55 +413,52 @@ func main() {
 			select {
 			case event, ok := <-watcher.Events:
 				if !ok {
-					return
+					log.Info().Msg("Watcher events channel closed, exiting event loop.")
+					return // Exit goroutine if channel is closed
 				}
 
-				// We only care about newly created or modified files
-				if event.Op&(fsnotify.Create|fsnotify.Write) != 0 {
+				// We only care about newly created or written files (ignoring CHMOD etc.)
+				if event.Has(fsnotify.Create) || event.Has(fsnotify.Write) {
 					filePath := event.Name
-					if isImageFile(filePath) && !isTemporaryCompressedFile(filepath.Base(filePath)) {
-						// Wait for the file to be fully written by checking stability
-						err := waitForFileStability(filePath, 100*time.Millisecond, 300*time.Millisecond, 5*time.Second)
-						if err != nil {
-							log.Error().Err(err).Str("file", filePath).Msg("Failed waiting for file stability, skipping processing") // Use zerolog for non-fatal errors
-							continue                                                                                                 // Skip processing this file
-						}
+					// Basic filtering
+					if !isImageFile(filePath) || isTemporaryCompressedFile(filepath.Base(filePath)) {
+						continue // Skip non-images or our temp files
+					}
 
-						// Check if we have capacity for a new worker
-						if config.ParallelProcesses == 1 {
-							// For single process mode, just process directly
-							wg.Add(1)
-							processImage(filePath, config, &wg)
-						} else {
-							// For parallel mode, spawn a goroutine
-							wg.Add(1)
-							go processImage(filePath, config, &wg)
-						}
+					// Wait for the file to be fully written by checking stability
+					// Use slightly longer intervals for stability check
+					stabilityErr := waitForFileStability(filePath, 200*time.Millisecond, 500*time.Millisecond, 10*time.Second)
+					if stabilityErr != nil {
+						log.Error().Err(stabilityErr).Str("file", filePath).Msg("Skipping processing due to file stability issue")
+						continue // Skip processing this file
+					}
+
+					// Process the image (potentially in parallel)
+					wg.Add(1)
+					if config.ParallelProcesses <= 1 {
+						// Run directly if parallelism is 1 or less
+						processImage(filePath, config, &wg)
+					} else {
+						// Run in a new goroutine for parallel processing
+						go processImage(filePath, config, &wg)
+						// Optional: Add logic here to limit the number of active goroutines
+						// if PARALLEL_PROCESSES needs to be a strict limit, e.g., using a semaphore.
+						// For simplicity, this currently allows potentially more than PARALLEL_PROCESSES
+						// goroutines if events arrive very rapidly, but WaitGroup still tracks completion.
 					}
 				}
 			case err, ok := <-watcher.Errors:
 				if !ok {
-					return
+					log.Info().Msg("Watcher errors channel closed, exiting event loop.")
+					return // Exit goroutine if channel is closed
 				}
-				log.Error().Err(err).Msg("Watcher error") // Use zerolog for non-fatal errors
+				log.Error().Err(err).Msg("Watcher error")
 			}
 		}
 	}()
 
-	// Add the watch directory and check error separately
-	addWatchErr := watcher.Add(config.WatchDir)
-	if addWatchErr != nil {
-		// Use standard library log.Fatalf for this specific fatal error
-		stdlog.Fatalf("Failed to watch directory %s: %v", config.WatchDir, addWatchErr)
-	}
+	log.Info().Str("directory", config.WatchDir).Msg("Now watching for new image uploads...")
 
-	log.Info().
-		Str("directory", config.WatchDir).
-		Msg("Now watching for new image uploads")
-
-	// Keep the application running
-	if os.Getenv("DEBUG") == "true" {
-		fmt.Println("Press Ctrl+C to stop")
-	}
+	// Keep the application running indefinitely
 	select {} // Block forever
 }

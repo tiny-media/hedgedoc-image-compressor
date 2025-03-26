@@ -178,9 +178,9 @@ func processImage(filePath string, config Config, wg *sync.WaitGroup) {
 	}
 	defer image.Close()
 
-	// Resize if needed (using built-in max since Go 1.21+)
+	// Resize if needed
 	if newWidth, newHeight := image.Width(), image.Height(); newWidth > config.MaxDimension || newHeight > config.MaxDimension {
-		scale := float64(config.MaxDimension) / float64(max(newWidth, newHeight)) // Use built-in max
+		scale := float64(config.MaxDimension) / float64(max(newWidth, newHeight))
 		if err := image.Resize(scale, vips.KernelLanczos3); err != nil {
 			log.Error().Err(err).Str("file", filepath.Base(filePath)).Msg("Failed to resize image")
 			return
@@ -220,7 +220,7 @@ func processImage(filePath string, config Config, wg *sync.WaitGroup) {
 		return
 	}
 
-	// Write the compressed image to temporary file
+	// Write the compressed image to temporary file with same permissions as original
 	if err := os.WriteFile(tempPath, buf, originalInfo.Mode()); err != nil {
 		log.Error().Err(err).Str("file", filepath.Base(filePath)).Msg("Failed to write compressed image")
 		return
@@ -312,7 +312,6 @@ func waitForFileStability(filePath string, checkInterval time.Duration, stableDu
 		lastInfo = currentInfo
 		time.Sleep(checkInterval)
 	}
-	// Note: The outer 'err' declared earlier is intentionally unused if the loop exits normally or via timeout return.
 }
 
 func main() {
@@ -440,10 +439,10 @@ func main() {
 					} else {
 						// Run in a new goroutine for parallel processing
 						go processImage(filePath, config, &wg)
-						// Optional: Add logic here to limit the number of active goroutines
-						// if PARALLEL_PROCESSES needs to be a strict limit, e.g., using a semaphore.
-						// For simplicity, this currently allows potentially more than PARALLEL_PROCESSES
-						// goroutines if events arrive very rapidly, but WaitGroup still tracks completion.
+						// The processingCount atomic counter tracks active processing operations
+						// While not strictly limiting to PARALLEL_PROCESSES, this approach is more
+						// flexible for handling bursts of new files while still maintaining
+						// proper tracking via WaitGroup.
 					}
 				}
 			case err, ok := <-watcher.Errors:

@@ -369,7 +369,7 @@ func main() {
 	// Create file watcher
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		_ = err // Explicitly use/ignore variable to satisfy compiler
+		// Revert to standard error handling
 		log.Fatal().Err(err).Msg("Failed to create file watcher")
 	}
 	defer watcher.Close()
@@ -437,11 +437,9 @@ func main() {
 	// Add the watch directory and check error separately
 	addWatchErr := watcher.Add(config.WatchDir)
 	if addWatchErr != nil {
-		// Use the explicitly declared error variable
-		fmt.Printf("FATAL: Failed to watch directory %s: %v\n", config.WatchDir, addWatchErr) // Keep explicit print
-		_ = addWatchErr                                                                       // Explicitly use/ignore variable to satisfy compiler
+		// Revert to standard error handling
 		log.Fatal().
-			Err(addWatchErr). // Log the error properly
+			Err(addWatchErr).
 			Str("directory", config.WatchDir).
 			Msg("Failed to watch directory")
 	}

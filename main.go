@@ -272,7 +272,6 @@ func waitForFileStability(filePath string, checkInterval time.Duration, stableDu
 	startTime := time.Now()
 
 	var lastInfo os.FileInfo
-	var err error // Declare err once for the loop
 
 	stableChecks := 0
 	requiredStableChecks := int(stableDuration / checkInterval)
@@ -286,14 +285,14 @@ func waitForFileStability(filePath string, checkInterval time.Duration, stableDu
 			return fmt.Errorf("timeout waiting for file stability: %s", filePath)
 		}
 
-		currentInfo, statErr := os.Stat(filePath) // Use different variable name for Stat error
-		if statErr != nil {
+		currentInfo, err := os.Stat(filePath)
+		if err != nil {
 			// If the file doesn't exist (maybe deleted quickly), return error
-			if os.IsNotExist(statErr) {
+			if os.IsNotExist(err) {
 				return fmt.Errorf("file disappeared while waiting for stability: %s", filePath)
 			}
 			// Log other stat errors but continue trying
-			log.Warn().Err(statErr).Str("file", filePath).Msg("Error stating file during stability check, retrying...")
+			log.Warn().Err(err).Str("file", filePath).Msg("Error stating file during stability check, retrying...")
 			time.Sleep(checkInterval) // Wait before retrying stat
 			continue                  // Continue the loop
 		}

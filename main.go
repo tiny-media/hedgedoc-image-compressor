@@ -363,16 +363,13 @@ func main() {
 	})
 	defer vips.Shutdown()
 
-	// Make sure the watch directory exists - check error separately
-	_, err := os.Stat(config.WatchDir)
-	if err != nil { // Check if any error occurred during Stat
+	// Make sure the watch directory exists using standard "if with short statement"
+	if _, err := os.Stat(config.WatchDir); err != nil {
 		if os.IsNotExist(err) { // Check if the specific error is NotExist
 			// Use standard library log.Fatalf for this specific fatal error
 			stdlog.Fatalf("Watch directory does not exist: %v", err)
 		}
-		// Optionally handle other os.Stat errors here if needed,
-		// otherwise, we proceed assuming the directory exists but might have other issues later.
-		// For now, we only fatally exit if it specifically does not exist.
+		// Log other Stat errors as warnings but continue
 		log.Warn().Err(err).Str("directory", config.WatchDir).Msg("Warning: Error stating watch directory (but it exists)")
 	}
 

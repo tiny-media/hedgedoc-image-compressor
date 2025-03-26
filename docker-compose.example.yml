@@ -19,7 +19,7 @@ services:
             start_period: 15s
 
     app:
-        image: quay.io/hedgedoc/hedgedoc:${VERSION}
+        image: quay.io/hedgedoc/hedgedoc:${HEDGEDOC_VERSION}
         container_name: hedgedoc
         environment:
             - CMD_DB_URL=postgres://hedgedoc:${POSTGRES_PASSWORD}@database:5432/hedgedoc
@@ -73,7 +73,7 @@ services:
             - hedgedoc-internal
             - proxy
     image-compress:
-        image: ghcr.io/tiny-media/hedgedoc-image-compressor:latest # Use image from GHCR
+        image: ghcr.io/tiny-media/hedgedoc-image-compressor:${IMAGE_COMPRESSOR_VERSION}
         container_name: hedgedoc-image-compress
         volumes:
             - hedgedoc_uploads:/hedgedoc/public/uploads
@@ -83,17 +83,17 @@ services:
         networks:
             - hedgedoc-internal
         environment:
-
-            - OUTPUT_FORMAT=avif
-            - REDUCTION_THRESHOLD=15
-            - WEBP_QUALITY=75
-            - AVIF_QUALITY=60
-            - JPEG_QUALITY=75
-            - MAX_DIMENSION=1600
-            - PARALLEL_PROCESSES=1
-            - CPU_COUNT=1
-            - MALLOC_ARENA_MAX=2
-            - DEBUG=false
+            # Use variables from .env file
+            - OUTPUT_FORMAT=${OUTPUT_FORMAT}
+            - REDUCTION_THRESHOLD=${REDUCTION_THRESHOLD}
+            - WEBP_QUALITY=${WEBP_QUALITY}
+            - AVIF_QUALITY=${AVIF_QUALITY}
+            - JPEG_QUALITY=${JPEG_QUALITY}
+            - MAX_DIMENSION=${MAX_DIMENSION}
+            - PARALLEL_PROCESSES=${PARALLEL_PROCESSES}
+            - CPU_COUNT=${CPU_COUNT}
+            - MALLOC_ARENA_MAX=2  # Static configuration, rarely changed
+            - DEBUG=${DEBUG}
         healthcheck:
             test: ["CMD-SHELL", "pgrep -f main || exit 1"]
             interval: 30s

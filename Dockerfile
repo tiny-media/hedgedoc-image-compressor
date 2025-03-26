@@ -1,8 +1,8 @@
-FROM alpine:3.21 AS builder
+# Use official Go image based on Alpine for the builder stage
+FROM golang:1.24-alpine3.21 AS builder
 
-# Install build dependencies (using Go 1.24)
+# Install C build dependencies needed for vips/cgo
 RUN apk add --no-cache \
-    go~1.24 \
     gcc \
     g++ \
     pkgconf \

@@ -1,0 +1,116 @@
+services:
+    database:
+        image: postgres:17
+        container_name: hedgedoc_database
+        environment:
+            - POSTGRES_USER=hedgedoc
+            - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+            - POSTGRES_DB=hedgedoc
+        volumes:
+            - hedgedoc_database:/var/lib/postgresql/data
+        restart: unless-stopped
+        networks:
+            - hedgedoc-internal
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U hedgedoc -d hedgedoc"]
+            interval: 30s
+            timeout: 5s
+            retries: 5
+            start_period: 15s
+
+    app:
+        image: quay.io/hedgedoc/hedgedoc:${VERSION}
+        container_name: hedgedoc
+        environment:
+            - CMD_DB_URL=postgres://hedgedoc:${POSTGRES_PASSWORD}@database:5432/hedgedoc
+            - CMD_DOMAIN=${DOMAIN}
+            - TZ=${TIMEZONE}
+            - CMD_LOGLEVEL=info
+            - CMD_PROTOCOL_USESSL=true
+            - CMD_URL_ADDPORT=false
+            - NODE_ENV=production
+            - CMD_ALLOW_ORIGIN=['localhost']
+            - CMD_SESSION_SECRET=${CMD_SESSION_SECRET}
+            - CMD_SESSION_LIFE=31449600000
+            - CMD_ALLOW_ANONYMOUS=false
+            - CMD_ALLOW_ANONYMOUS_EDITS=true
+            - CMD_ALLOW_FREEURL=true
+            - CMD_REQUIRE_FREEURL_AUTHENTICATION=true
+            - CMD_DEFAULT_PERMISSION=freely
+            - CMD_ALLOW_EMAIL_REGISTER=false
+            - CMD_EMAIL=false
+            - CMD_ALLOW_GRAVATAR=false
+            - CMD_FORBIDDEN_NOTE_IDS=['robots.txt', 'favicon.ico', 'api', 'build', 'css', 'docs', 'fonts', 'js', 'uploads', 'vendor', 'views', 'login', 'logout', 'register', 'admin', 'profile', 'settings', 'dashboard', 'history', 'index', 'home']
+
+            # OAuth2 Configuration
+            - CMD_OAUTH2_PROVIDERNAME=${CMD_OAUTH2_PROVIDERNAME}
+            - CMD_OAUTH2_CLIENT_ID=hedgedoc
+            - CMD_OAUTH2_CLIENT_SECRET=${CMD_OAUTH2_CLIENT_SECRET}
+            - CMD_OAUTH2_TOKEN_URL=${AUTHELIA_URL}/api/oidc/token
+            - CMD_OAUTH2_AUTHORIZATION_URL=${AUTHELIA_URL}/api/oidc/authorization
+            - CMD_OAUTH2_USER_PROFILE_URL=${AUTHELIA_URL}/api/oidc/userinfo
+            - CMD_OAUTH2_USER_PROFILE_USERNAME_ATTR=preferred_username
+            - CMD_OAUTH2_USER_PROFILE_DISPLAY_NAME_ATTR=name
+            - CMD_OAUTH2_USER_PROFILE_EMAIL_ATTR=email
+            - CMD_OAUTH2_SCOPE=openid email profile groups
+
+        volumes:
+            - hedgedoc_uploads:/hedgedoc/public/uploads
+        labels:
+            - "traefik.enable=true"
+            - "traefik.docker.network=proxy"
+            - "traefik.http.routers.hedgedoc.entrypoints=websecure"
+            - "traefik.http.routers.hedgedoc.rule=Host(`${DOMAIN}`)"
+            - "traefik.http.routers.hedgedoc.tls=true"
+            - "traefik.http.services.hedgedoc.loadbalancer.server.port=3000"
+            - "traefik.http.middlewares.hedgedoc-forward-proto.headers.customrequestheaders.X-Forwarded-Proto=https"
+            - "traefik.http.routers.hedgedoc.middlewares=default@file,no-index@file,hedgedoc-forward-proto"
+
+        restart: unless-stopped
+        depends_on:
+            - database
+        networks:
+            - hedgedoc-internal
+            - proxy
+    image-compress:
+        build:
+            context: ./image-compress
+            dockerfile: Dockerfile
+        container_name: hedgedoc-image-compress
+        volumes:
+            - hedgedoc_uploads:/hedgedoc/public/uploads
+        restart: unless-stopped
+        depends_on:
+            - app
+        networks:
+            - hedgedoc-internal
+        environment:
+
+            - OUTPUT_FORMAT=avif
+            - REDUCTION_THRESHOLD=15
+            - WEBP_QUALITY=75
+            - AVIF_QUALITY=60
+            - JPEG_QUALITY=75
+            - MAX_DIMENSION=1600
+            - PARALLEL_PROCESSES=1
+            - CPU_COUNT=1
+            - MALLOC_ARENA_MAX=2
+            - DEBUG=false
+        healthcheck:
+            test: ["CMD-SHELL", "pgrep -f main || exit 1"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
+            start_period: 10s
+
+networks:
+    hedgedoc-internal:
+        name: hedgedoc-internal
+    proxy:
+        external: true
+
+volumes:
+    hedgedoc_database:
+        name: hedgedoc_database
+    hedgedoc_uploads:
+        name: hedgedoc_uploads

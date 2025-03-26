@@ -73,9 +73,7 @@ services:
             - hedgedoc-internal
             - proxy
     image-compress:
-        build:
-            context: ./image-compress
-            dockerfile: Dockerfile
+        image: ghcr.io/tiny-media/hedgedoc-image-compressor:latest # Use image from GHCR
         container_name: hedgedoc-image-compress
         volumes:
             - hedgedoc_uploads:/hedgedoc/public/uploads

@@ -39,18 +39,34 @@ The service can be customized using the following environment variables:
 ### Installation
 
 1. Ensure you have a working HedgeDoc setup using Docker Compose.
-2. Add the image-compress service to your `docker-compose.yml` file as shown in the provided example.
-3. cd into the hedgedoc directory
-4. Start the Hedgedoc Stack - an the first time the image-compress service will be built (building needs around 2min) 
+2. Add the `image-compress` service to your `docker-compose.yml` file. You can use the provided `docker-compose.example.yml` as a reference. Make sure the `image` directive points to the correct GitHub Container Registry image:
+   ```yaml
+   services:
+     # ... other services (database, app) ...
+
+     image-compress:
+       image: ghcr.io/tiny-media/hedgedoc-image-compressor:latest # Use image from GHCR
+       container_name: hedgedoc-image-compress
+       volumes:
+         - hedgedoc_uploads:/hedgedoc/public/uploads # Ensure this volume name matches your HedgeDoc app service
+       restart: unless-stopped
+       depends_on:
+         - app
+       networks:
+         - hedgedoc-internal # Ensure this network name matches your HedgeDoc app service
+       environment:
+         # Optional: Override default configuration variables here
+         # - OUTPUT_FORMAT=webp
+         # - REDUCTION_THRESHOLD=10
+         # - MAX_DIMENSION=2000
+         # ... see Configuration section for all options ...
+   ```
+3. Ensure the `volumes` and `networks` used by the `image-compress` service match those used by your main HedgeDoc `app` service so it can access the uploads directory.
+4. Start your HedgeDoc stack using Docker Compose:
    ```bash
    docker compose up -d
    ```
-
-- You can delete/prune the build cache objects (around 1.3GB) after the image is built:
-   ```bash
-   docker builder prune
-   ```
-- The Container is around 100MB when built
+   Docker (or Podman) will automatically pull the `hedgedoc-image-compressor` image from the GitHub Container Registry.
 
 ### Monitoring
 
